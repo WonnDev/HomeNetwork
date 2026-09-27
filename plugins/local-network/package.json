@@ -1,0 +1,19 @@
+{
+  "name": "@wonn/local-network",
+  "version": "0.0.1",
+  "description": "Native local IPv4 information for Home Network Scanner.",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": ["dist", "ios", "Package.swift"],
+  "keywords": ["capacitor", "native", "network"],
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  }
+}
