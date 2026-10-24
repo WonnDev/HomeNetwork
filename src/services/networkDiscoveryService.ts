@@ -16,6 +16,9 @@ export const bonjourServiceTypes = [
 
 export type SsdpDiscoveryStatus = 'available' | 'unavailable'
 
+let activeDiscoveryId = 0
+let activeDiscoveryCancel: (() => void) | null = null
+
 export function isBonjourDiscoveryAvailable(): boolean {
   return Capacitor.getPlatform() === 'ios'
 }
@@ -32,6 +35,14 @@ export async function startDiscovery(): Promise<void> {
 export async function stopDiscovery(): Promise<void> {
   if (!isBonjourDiscoveryAvailable()) return
   await LocalNetworkPlugin.stopBonjourDiscovery()
+}
+
+export async function cancelNetworkDiscovery(): Promise<void> {
+  activeDiscoveryId += 1
+  const cancel = activeDiscoveryCancel
+  activeDiscoveryCancel = null
+  cancel?.()
+  await stopDiscovery()
 }
 
 export function subscribeToFound(listener: (service: DiscoveredService) => void): Promise<PluginListenerHandle> {
@@ -53,29 +64,47 @@ export async function discoverNetworkServices(durationMs = 5000): Promise<{
 }> {
   if (!isBonjourDiscoveryAvailable()) return { bonjourServices: [], ssdpServices: [], ssdpStatus: 'unavailable' }
 
+  const discoveryId = ++activeDiscoveryId
+  activeDiscoveryCancel?.()
+
   const bonjourServices = new Map<string, DiscoveredService>()
   const ssdpServices = new Map<string, DiscoveredSSDPService>()
   const foundHandle = await subscribeToFound((service) => bonjourServices.set(service.id, service))
   const lostHandle = await subscribeToLost((service) => bonjourServices.delete(service.id))
   const ssdpAvailable = isSsdpDiscoveryAvailable()
   const ssdpHandle = ssdpAvailable ? await subscribeToSSDPFound((service) => ssdpServices.set(service.id, service)) : null
+  let resolveWait: (() => void) | null = null
+  let timer: number | undefined
+  const waitForDiscovery = new Promise<void>((resolve) => {
+    resolveWait = resolve
+    timer = window.setTimeout(resolve, durationMs)
+  })
+  const cancel = () => {
+    if (timer !== undefined) window.clearTimeout(timer)
+    resolveWait?.()
+  }
+  activeDiscoveryCancel = cancel
 
   try {
     await Promise.all([
       startDiscovery(),
       ssdpAvailable ? LocalNetworkPlugin.startSSDPDiscovery() : Promise.resolve(),
     ])
-    await new Promise<void>((resolve) => window.setTimeout(resolve, durationMs))
+    await waitForDiscovery
     return {
       bonjourServices: [...bonjourServices.values()],
       ssdpServices: [...ssdpServices.values()],
       ssdpStatus: ssdpAvailable ? 'available' : 'unavailable',
     }
   } finally {
-    await Promise.all([
-      stopDiscovery(),
-      ssdpAvailable ? LocalNetworkPlugin.stopSSDPDiscovery() : Promise.resolve(),
-    ])
+    if (timer !== undefined) window.clearTimeout(timer)
+    if (activeDiscoveryId === discoveryId) {
+      activeDiscoveryCancel = null
+      await Promise.all([
+        stopDiscovery(),
+        ssdpAvailable ? LocalNetworkPlugin.stopSSDPDiscovery() : Promise.resolve(),
+      ])
+    }
     await foundHandle.remove()
     await lostHandle.remove()
     if (ssdpHandle) await ssdpHandle.remove()

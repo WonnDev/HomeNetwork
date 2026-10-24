@@ -17,6 +17,7 @@
     "@capacitor/core": "^8.5.2",
     "@capacitor/ios": "^8.5.2",
     "@capacitor/network": "^8.0.1",
+    "@capacitor/preferences": "^8.0.1",
     "@wonn/local-network": "file:plugins/local-network",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

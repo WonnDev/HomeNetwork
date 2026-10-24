@@ -10,6 +10,8 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "LocalNetworkPlugin"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "getLocalIPAddress", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "scanTcpHosts", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelTcpScan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openWifiSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startBonjourDiscovery", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopBonjourDiscovery", returnType: CAPPluginReturnPromise),
@@ -22,6 +24,19 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
     private var discoveredServices: [String: DiscoveredService] = [:]
     private var ssdpConnectionGroup: NWConnection?
     private var discoveredSSDPServices: [String: DiscoveredSSDPService] = [:]
+    private let tcpScanQueue = DispatchQueue(label: "com.wonn.local-network.tcp-scan", attributes: .concurrent)
+    private let tcpSchedulerQueue = DispatchQueue(label: "com.wonn.local-network.tcp-scheduler")
+    private var tcpScanGeneration = 0
+    private var tcpScanConnections: [Int: [ObjectIdentifier: NWConnection]] = [:]
+    private var tcpScanJobs: [(host: String, port: NWEndpoint.Port, portNumber: Int)] = []
+    private var tcpScanNextJob = 0
+    private var tcpScanActive = 0
+    private var tcpScanMaxConcurrency = 24
+    private var tcpScanTimeoutMs = 350
+    private var tcpScanProcessed = 0
+    private var tcpScanStatsByPort: [String: [String: Int]] = [:]
+    private var tcpScanReachable: [[String: Any]] = []
+    private var tcpScanCall: CAPPluginCall?
 
     @objc func openWifiSettings(_ call: CAPPluginCall) {
         guard let settingsUrl = URL(string: "App-Prefs:root=WIFI") else {
@@ -81,10 +96,193 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
         let ipv6Address = wifiIpv6Address ?? fallbackIpv6Address
         var result: [String: Any] = [
             "ipAddress": address?.ipAddress ?? NSNull(),
-            "ipv6Address": ipv6Address?.ipAddress ?? NSNull()
+            "ipv6Address": ipv6Address?.ipAddress ?? NSNull(),
+            "subnetMask": address.flatMap { subnetMask(for: firstInterface, interfaceName: $0.interfaceName) } ?? NSNull()
         ]
+        if let mask = result["subnetMask"] as? String { result["prefixLength"] = prefixLength(for: mask) }
         if let address { result["interfaceName"] = address.interfaceName }
         call.resolve(result)
+    }
+
+    @objc func scanTcpHosts(_ call: CAPPluginCall) {
+        let hosts = call.getArray("hosts", String.self) ?? []
+        let ports = call.getArray("ports", Int.self) ?? []
+        let timeoutMs = max(100, min(call.getInt("timeoutMs") ?? 350, 2000))
+        let maxConcurrency = max(1, min(call.getInt("maxConcurrency") ?? 24, 64))
+        guard hosts.count <= 1024 else {
+            call.reject("The requested subnet is too large to scan safely")
+            return
+        }
+        guard !hosts.isEmpty, !ports.isEmpty else {
+            call.resolve(["hosts": []])
+            return
+        }
+
+        let jobs = hosts.flatMap { host in
+            ports.compactMap { port in
+                NWEndpoint.Port(rawValue: UInt16(port)).map { (host: host, port: $0, portNumber: port) }
+            }
+        }
+        let generation = browserQueue.sync { () -> Int in
+            cancelTcpScanLocked()
+            tcpScanGeneration += 1
+            tcpScanConnections[tcpScanGeneration] = [:]
+            tcpScanJobs = jobs
+            tcpScanNextJob = 0
+            tcpScanActive = 0
+            tcpScanMaxConcurrency = maxConcurrency
+            tcpScanTimeoutMs = timeoutMs
+            tcpScanProcessed = 0
+            tcpScanStatsByPort = [:]
+            tcpScanReachable = []
+            tcpScanCall = call
+            return tcpScanGeneration
+        }
+        tcpSchedulerQueue.async { [weak self] in
+            self?.scheduleTcpProbes(generation: generation)
+        }
+    }
+
+    @objc func cancelTcpScan(_ call: CAPPluginCall) {
+        browserQueue.async { [weak self] in
+            self?.cancelTcpScanLocked()
+        }
+        call.resolve()
+    }
+
+    private func cancelTcpScanLocked() {
+        let pending = max(0, tcpScanJobs.count - tcpScanNextJob)
+        let active = tcpScanActive
+        if tcpScanCall != nil {
+            notifyListeners("tcpScanProgress", data: [
+                "processed": tcpScanProcessed,
+                "total": tcpScanJobs.count,
+                "responsiveHosts": Set(tcpScanReachable.compactMap { $0["ipAddress"] as? String }).count,
+                "statsByPort": tcpScanStatsByPort,
+                "pendingCancelled": pending + active,
+            ])
+            tcpScanCall?.reject("TCP scan cancelled")
+            tcpScanCall = nil
+        }
+        tcpScanGeneration += 1
+        let connections = tcpScanConnections.values.flatMap { $0.values }
+        tcpScanConnections.removeAll()
+        connections.forEach { $0.cancel() }
+        tcpScanJobs = []
+        tcpScanNextJob = 0
+        tcpScanActive = 0
+    }
+
+    private func scheduleTcpProbes(generation: Int) {
+        guard browserQueue.sync(execute: { tcpScanGeneration == generation && tcpScanCall != nil }) else { return }
+        while tcpScanActive < tcpScanMaxConcurrency && tcpScanNextJob < tcpScanJobs.count {
+            let job = tcpScanJobs[tcpScanNextJob]
+            tcpScanNextJob += 1
+            tcpScanActive += 1
+            probeTcpHost(job.host, port: job.port, timeoutMs: tcpScanTimeoutMs, generation: generation) { [weak self] outcome in
+                self?.tcpSchedulerQueue.async {
+                    self?.completeTcpProbe(job: job, outcome: outcome, generation: generation)
+                }
+            }
+        }
+        if tcpScanNextJob == tcpScanJobs.count && tcpScanActive == 0 {
+            finishTcpScan(generation: generation)
+        }
+    }
+
+    private func completeTcpProbe(job: (host: String, port: NWEndpoint.Port, portNumber: Int), outcome: TcpProbeOutcome, generation: Int) {
+        guard browserQueue.sync(execute: { tcpScanGeneration == generation && tcpScanCall != nil }) else { return }
+        tcpScanActive -= 1
+        tcpScanProcessed += 1
+        let portKey = String(job.portNumber)
+        var portStats = tcpScanStatsByPort[portKey, default: [:]]
+        portStats[outcome.rawValue, default: 0] += 1
+        tcpScanStatsByPort[portKey] = portStats
+        if outcome == .success { tcpScanReachable.append(["ipAddress": job.host, "port": job.portNumber]) }
+        var progress: [String: Any] = [
+            "processed": tcpScanProcessed,
+            "total": tcpScanJobs.count,
+            "responsiveHosts": Set(tcpScanReachable.compactMap { $0["ipAddress"] as? String }).count,
+            "statsByPort": tcpScanStatsByPort,
+        ]
+        if outcome == .success {
+            progress["ipAddress"] = job.host
+            progress["port"] = job.portNumber
+        }
+        notifyListeners("tcpScanProgress", data: progress)
+        scheduleTcpProbes(generation: generation)
+    }
+
+    private func finishTcpScan(generation: Int) {
+        browserQueue.async { [weak self] in
+            guard let self, self.tcpScanGeneration == generation, let call = self.tcpScanCall else { return }
+            self.tcpScanConnections.removeValue(forKey: generation)
+            self.tcpScanCall = nil
+            call.resolve([
+                "hosts": self.tcpScanReachable,
+                "processed": self.tcpScanProcessed,
+                "total": self.tcpScanJobs.count,
+                "statsByPort": self.tcpScanStatsByPort,
+                "pendingCancelled": 0,
+            ])
+        }
+    }
+
+    private enum TcpProbeOutcome: String {
+        case success
+        case refused
+        case timeout
+        case other
+        case cancelled
+    }
+
+    private func probeTcpHost(_ host: String, port: NWEndpoint.Port, timeoutMs: Int, generation: Int, completion: @escaping (TcpProbeOutcome) -> Void) {
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
+        let connectionId = ObjectIdentifier(connection)
+        let registered = browserQueue.sync { () -> Bool in
+            guard tcpScanGeneration == generation else { return false }
+            tcpScanConnections[generation, default: [:]][connectionId] = connection
+            return true
+        }
+        guard registered else {
+            completion(.cancelled)
+            return
+        }
+        let lock = NSLock()
+        var finished = false
+        let finish: (TcpProbeOutcome) -> Void = { outcome in
+            lock.lock()
+            guard !finished else { lock.unlock(); return }
+            finished = true
+            lock.unlock()
+            connection.cancel()
+            self.browserQueue.async {
+                self.tcpScanConnections[generation]?[connectionId] = nil
+            }
+            completion(outcome)
+        }
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                finish(.success)
+            case .failed(let error):
+                if case .posix(let code) = error, code == .ECONNREFUSED {
+                    finish(.refused)
+                } else if case .posix(let code) = error, code == .ETIMEDOUT {
+                    finish(.timeout)
+                } else {
+                    finish(.other)
+                }
+            case .cancelled:
+                finish(.cancelled)
+            default:
+                break
+            }
+        }
+        connection.start(queue: tcpScanQueue)
+        tcpScanQueue.asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) {
+            finish(.timeout)
+        }
     }
 
     @objc func startBonjourDiscovery(_ call: CAPPluginCall) {
@@ -252,6 +450,24 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
 
         guard result != nil else { return nil }
         return String(cString: buffer)
+    }
+
+    private func subnetMask(for firstInterface: UnsafeMutablePointer<ifaddrs>, interfaceName: String) -> String? {
+        var currentInterface: UnsafeMutablePointer<ifaddrs>? = firstInterface
+        while let interface = currentInterface {
+            let name = String(cString: interface.pointee.ifa_name)
+            if name == interfaceName, let mask = interface.pointee.ifa_netmask, mask.pointee.sa_family == UInt8(AF_INET) {
+                return ipv4Address(from: mask)
+            }
+            currentInterface = interface.pointee.ifa_next
+        }
+        return nil
+    }
+
+    private func prefixLength(for mask: String) -> Int {
+        mask.split(separator: ".").reduce(0) { count, octet in
+            count + (Int(octet).map { UInt8($0).nonzeroBitCount } ?? 0)
+        }
     }
 
     private func ipv6Address(from address: UnsafeMutablePointer<sockaddr>) -> String? {

@@ -24,10 +24,13 @@
 .scan-button { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; border: 1px solid var(--primary); border-radius: 11px; background: var(--primary); color: #07120f; font: inherit; font-weight: 800; cursor: pointer; transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease; }
 .scan-button:hover:not(:disabled) { background: var(--primary-strong); box-shadow: 0 8px 22px rgba(87, 214, 166, .18); transform: translateY(-1px); }
 .scan-button:disabled { cursor: wait; opacity: .72; }
+.scan-button-cancel { background: transparent; color: var(--primary); }
 .scan-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 .discovery-note { margin: -13px 0 0; color: var(--text-muted); font-size: .7rem; line-height: 1.45; text-align: center; }
 .scan-status { margin: -8px 0 0; color: var(--text-muted); font-size: .7rem; line-height: 1.45; text-align: center; }
 .scan-status-error { color: #f0a29d; }
+.scan-status-progress { color: var(--primary); }
+.scan-status-warning { color: #e6c47a; }
 .spinner { width: 15px; height: 15px; border: 2px solid rgba(7, 18, 15, .28); border-top-color: #07120f; border-radius: 50%; animation: spin 700ms linear infinite; }
 .section-heading { align-items: flex-end; }
 .section-heading h2 { margin: 0; color: var(--text-primary); font-size: 1.28rem; letter-spacing: -.025em; }
@@ -37,6 +40,9 @@
 .service-group-heading { margin: 8px 0 0; color: var(--text-secondary); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; }
 .service-empty-state { margin: 0; padding: 12px 0 4px; color: var(--text-muted); font-size: .78rem; }
 .device-card { padding: 16px; animation: reveal 350ms ease both; }
+.responsive-host-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-secondary); }
+.responsive-host-card h3 { margin: 0; color: var(--text-primary); font-family: var(--mono); font-size: .82rem; }
+.responsive-host-card p { margin: 5px 0 0; color: var(--text-muted); font-size: .7rem; }
 .device-card-top { align-items: flex-start; gap: 12px; }
 .device-identity { display: flex; min-width: 0; flex: 1 1 0; align-items: center; gap: 11px; }
 .device-icon { display: grid; flex: 0 0 38px; width: 38px; height: 38px; place-items: center; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-highlight); color: var(--primary); font-size: 1.1rem; }
@@ -57,6 +63,19 @@
 .diagnostics-list li { display: grid; gap: 3px; }
 .diagnostics-list strong { color: var(--text-primary); font-size: .72rem; }
 .diagnostics-list span, .diagnostics-list small { color: var(--text-muted); font-family: var(--mono); font-size: .64rem; }
+.inventory-form { display: grid; gap: 8px; margin-top: 14px; }
+.inventory-form input, .inventory-name-editor input { min-width: 0; padding: 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-secondary); color: var(--text-primary); font-family: var(--mono); font-size: .75rem; }
+.inventory-form button, .inventory-card-header button { padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: .72rem; font-weight: 700; cursor: pointer; }
+.inventory-form button:hover, .inventory-card-header button:hover { border-color: var(--primary); color: var(--primary); }
+.inventory-list { display: grid; gap: 10px; margin-top: 12px; }
+.inventory-card { padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-secondary); }
+.inventory-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.inventory-card-header h3 { margin: 0; color: var(--text-primary); font-size: .86rem; }
+.inventory-card-header p { margin: 5px 0 0; color: var(--text-muted); font-size: .68rem; }
+.inventory-details { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.inventory-details dt { color: var(--text-muted); font-size: .68rem; }
+.inventory-details dd { min-width: 0; margin: 0; color: var(--text-secondary); font-family: var(--mono); font-size: .66rem; overflow-wrap: anywhere; }
+.inventory-name-editor { display: grid; gap: 5px; color: var(--text-muted); font-size: .68rem; }
 .empty-state { margin-top: 14px; padding: 28px 18px; border: 1px dashed var(--border-strong); border-radius: 12px; color: var(--text-muted); text-align: center; }
 .empty-state-icon { display: block; margin-bottom: 8px; color: var(--primary); font-size: 1.5rem; }
 .empty-state p { color: var(--text-secondary); font-size: .87rem; font-weight: 700; }
