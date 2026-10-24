@@ -16,4 +16,5 @@ export interface NetworkDevice {
   type: DeviceType
   status: DeviceStatus
   services: string[]
+  isCurrentDevice?: boolean
 }

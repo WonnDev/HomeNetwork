@@ -34,7 +34,7 @@ export function DeviceCard({ device }: DeviceCardProps) {
         <div className="device-identity">
           <span className="device-icon" aria-hidden="true">{deviceIcons[device.type]}</span>
           <div>
-            <h3 className="device-name">{device.name}</h3>
+            <h3 className="device-name">{device.name}{device.isCurrentDevice && <span className="current-device-label">This iPhone</span>}</h3>
             <p className="device-ip">{device.ip}</p>
           </div>
         </div>

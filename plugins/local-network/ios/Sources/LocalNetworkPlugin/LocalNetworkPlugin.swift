@@ -2,7 +2,6 @@ import Foundation
 import Capacitor
 import Darwin
 import Network
-import NetworkExtension
 import UIKit
 
 @objc(LocalNetworkPlugin)
@@ -11,7 +10,6 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "LocalNetworkPlugin"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "getLocalIPAddress", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getCurrentSSID", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openWifiSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startBonjourDiscovery", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopBonjourDiscovery", returnType: CAPPluginReturnPromise),
@@ -24,12 +22,6 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
     private var discoveredServices: [String: DiscoveredService] = [:]
     private var ssdpConnectionGroup: NWConnection?
     private var discoveredSSDPServices: [String: DiscoveredSSDPService] = [:]
-
-    @objc func getCurrentSSID(_ call: CAPPluginCall) {
-        NEHotspotNetwork.fetchCurrent { network in
-            call.resolve(["ssid": network?.ssid ?? NSNull()])
-        }
-    }
 
     @objc func openWifiSettings(_ call: CAPPluginCall) {
         guard let settingsUrl = URL(string: "App-Prefs:root=WIFI") else {
@@ -47,7 +39,7 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func getLocalIPAddress(_ call: CAPPluginCall) {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0, let firstInterface = interfaces else {
-            call.resolve(["ipAddress": NSNull()])
+            call.resolve(["ipAddress": NSNull(), "ipv6Address": NSNull()])
             return
         }
         defer { freeifaddrs(interfaces) }
@@ -55,23 +47,30 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
         var currentInterface: UnsafeMutablePointer<ifaddrs>? = firstInterface
         var fallbackAddress: (ipAddress: String, interfaceName: String)?
         var wifiAddress: (ipAddress: String, interfaceName: String)?
+        var fallbackIpv6Address: (ipAddress: String, interfaceName: String)?
+        var wifiIpv6Address: (ipAddress: String, interfaceName: String)?
 
         while let interface = currentInterface {
             let flags = Int32(interface.pointee.ifa_flags)
             let isUp = (flags & Int32(IFF_UP)) != 0
             let isLoopback = (flags & Int32(IFF_LOOPBACK)) != 0
 
-            if isUp && !isLoopback,
-               let address = interface.pointee.ifa_addr,
-               address.pointee.sa_family == UInt8(AF_INET),
-               let ipAddress = ipv4Address(from: address) {
+            if isUp && !isLoopback, let address = interface.pointee.ifa_addr {
                 let interfaceName = String(cString: interface.pointee.ifa_name)
-                let result = (ipAddress, interfaceName)
-
-                if interfaceName == "en0" {
-                    wifiAddress = result
-                } else if fallbackAddress == nil {
-                    fallbackAddress = result
+                if address.pointee.sa_family == UInt8(AF_INET), let ipAddress = ipv4Address(from: address) {
+                    let result = (ipAddress, interfaceName)
+                    if interfaceName == "en0" {
+                        wifiAddress = result
+                    } else if fallbackAddress == nil {
+                        fallbackAddress = result
+                    }
+                } else if address.pointee.sa_family == UInt8(AF_INET6), let ipAddress = ipv6Address(from: address) {
+                    let result = (ipAddress, interfaceName)
+                    if interfaceName == "en0" && !ipAddress.lowercased().hasPrefix("fe80:") {
+                        wifiIpv6Address = result
+                    } else if fallbackIpv6Address == nil && !ipAddress.lowercased().hasPrefix("fe80:") {
+                        fallbackIpv6Address = result
+                    }
                 }
             }
 
@@ -79,14 +78,13 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let address = wifiAddress ?? fallbackAddress
-        if let address {
-            call.resolve([
-                "ipAddress": address.ipAddress,
-                "interfaceName": address.interfaceName
-            ])
-        } else {
-            call.resolve(["ipAddress": NSNull()])
-        }
+        let ipv6Address = wifiIpv6Address ?? fallbackIpv6Address
+        var result: [String: Any] = [
+            "ipAddress": address?.ipAddress ?? NSNull(),
+            "ipv6Address": ipv6Address?.ipAddress ?? NSNull()
+        ]
+        if let address { result["interfaceName"] = address.interfaceName }
+        call.resolve(result)
     }
 
     @objc func startBonjourDiscovery(_ call: CAPPluginCall) {
@@ -249,6 +247,21 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
             pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddrPointer in
                 var ipv4Address = sockaddrPointer.pointee.sin_addr
                 return inet_ntop(AF_INET, &ipv4Address, &buffer, socklen_t(INET_ADDRSTRLEN))
+            }
+        }
+
+        guard result != nil else { return nil }
+        return String(cString: buffer)
+    }
+
+    private func ipv6Address(from address: UnsafeMutablePointer<sockaddr>) -> String? {
+        var addressCopy = address.pointee
+        var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+
+        let result = withUnsafePointer(to: &addressCopy) { pointer in
+            pointer.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sockaddrPointer in
+                var ipv6Address = sockaddrPointer.pointee.sin6_addr
+                return inet_ntop(AF_INET6, &ipv6Address, &buffer, socklen_t(INET6_ADDRSTRLEN))
             }
         }
 

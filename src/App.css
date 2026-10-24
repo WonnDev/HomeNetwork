@@ -19,11 +19,15 @@
 .network-change-button:hover { border-color: var(--primary); color: var(--primary); }
 .network-change-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .network-detail dt { margin-bottom: 5px; color: var(--text-muted); font-size: .72rem; }
-.network-detail dd { margin: 0; color: var(--text-primary); font-family: var(--mono); font-size: .83rem; }
+.network-detail-wide { grid-column: 1 / -1; }
+.network-detail dd { margin: 0; color: var(--text-primary); font-family: var(--mono); font-size: .83rem; overflow-wrap: anywhere; }
 .scan-button { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; border: 1px solid var(--primary); border-radius: 11px; background: var(--primary); color: #07120f; font: inherit; font-weight: 800; cursor: pointer; transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease; }
 .scan-button:hover:not(:disabled) { background: var(--primary-strong); box-shadow: 0 8px 22px rgba(87, 214, 166, .18); transform: translateY(-1px); }
 .scan-button:disabled { cursor: wait; opacity: .72; }
 .scan-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.discovery-note { margin: -13px 0 0; color: var(--text-muted); font-size: .7rem; line-height: 1.45; text-align: center; }
+.scan-status { margin: -8px 0 0; color: var(--text-muted); font-size: .7rem; line-height: 1.45; text-align: center; }
+.scan-status-error { color: #f0a29d; }
 .spinner { width: 15px; height: 15px; border: 2px solid rgba(7, 18, 15, .28); border-top-color: #07120f; border-radius: 50%; animation: spin 700ms linear infinite; }
 .section-heading { align-items: flex-end; }
 .section-heading h2 { margin: 0; color: var(--text-primary); font-size: 1.28rem; letter-spacing: -.025em; }
@@ -34,16 +38,25 @@
 .service-empty-state { margin: 0; padding: 12px 0 4px; color: var(--text-muted); font-size: .78rem; }
 .device-card { padding: 16px; animation: reveal 350ms ease both; }
 .device-card-top { align-items: flex-start; gap: 12px; }
-.device-identity { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.device-identity { display: flex; min-width: 0; flex: 1 1 0; align-items: center; gap: 11px; }
 .device-icon { display: grid; flex: 0 0 38px; width: 38px; height: 38px; place-items: center; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-highlight); color: var(--primary); font-size: 1.1rem; }
-.device-name { overflow: hidden; margin: 0; color: var(--text-primary); font-size: .94rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.device-name { min-width: 0; margin: 0; color: var(--text-primary); font-size: .94rem; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.current-device-label { display: inline-block; margin-left: 8px; color: var(--primary); font-size: .62rem; letter-spacing: .06em; text-transform: uppercase; vertical-align: middle; }
 .device-ip { margin: 4px 0 0; color: var(--text-secondary); font-family: var(--mono); font-size: .75rem; }
-.device-status { flex-shrink: 0; margin-top: 4px; }
+.device-status { flex-shrink: 0; max-width: 92px; margin-top: 4px; white-space: nowrap; }
 .device-status.offline { color: var(--text-muted); }
-.device-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.device-meta { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .device-type { color: var(--text-muted); font-size: .72rem; text-transform: capitalize; }
-.services { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.services { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .service-badge { padding: 4px 7px; border: 1px solid var(--border-strong); border-radius: 5px; color: var(--text-secondary); font-family: var(--mono); font-size: .67rem; font-weight: 700; }
+.discovery-diagnostics { margin-top: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-secondary); color: var(--text-secondary); font-size: .72rem; }
+.discovery-diagnostics summary { padding: 11px 13px; color: var(--text-secondary); font-weight: 700; cursor: pointer; }
+.diagnostics-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; padding: 0 13px 12px; }
+.diagnostics-grid strong { color: var(--text-primary); font-family: var(--mono); font-size: .68rem; text-align: right; }
+.diagnostics-list { display: grid; gap: 8px; margin: 0; padding: 12px 13px 13px; border-top: 1px solid var(--border); list-style: none; }
+.diagnostics-list li { display: grid; gap: 3px; }
+.diagnostics-list strong { color: var(--text-primary); font-size: .72rem; }
+.diagnostics-list span, .diagnostics-list small { color: var(--text-muted); font-family: var(--mono); font-size: .64rem; }
 .empty-state { margin-top: 14px; padding: 28px 18px; border: 1px dashed var(--border-strong); border-radius: 12px; color: var(--text-muted); text-align: center; }
 .empty-state-icon { display: block; margin-bottom: 8px; color: var(--primary); font-size: 1.5rem; }
 .empty-state p { color: var(--text-secondary); font-size: .87rem; font-weight: 700; }

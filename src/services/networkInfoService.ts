@@ -48,28 +48,25 @@ function isIpv4Address(value: string | null | undefined): value is string {
   return value !== undefined && value !== null && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)
 }
 
-async function resolveLocalIp(platform: AppPlatform): Promise<string | null> {
+interface LocalAddresses {
+  ipv4: string | null
+  ipv6: string | null
+}
+
+async function resolveLocalAddresses(platform: AppPlatform): Promise<LocalAddresses> {
   if (platform === 'ios') {
     try {
       const nativeAddress = await LocalNetworkPlugin.getLocalIPAddress()
-      if (isIpv4Address(nativeAddress.ipAddress)) return nativeAddress.ipAddress
+      return {
+        ipv4: isIpv4Address(nativeAddress.ipAddress) ? nativeAddress.ipAddress : null,
+        ipv6: nativeAddress.ipv6Address ?? null,
+      }
     } catch {
       // Fall back to the browser resolver if the native plugin is unavailable.
     }
   }
 
-  return discoverLocalIp()
-}
-
-async function resolveSsid(platform: AppPlatform): Promise<string | null> {
-  if (platform !== 'ios') return null
-
-  try {
-    const result = await LocalNetworkPlugin.getCurrentSSID()
-    return result.ssid
-  } catch {
-    return null
-  }
+  return { ipv4: await discoverLocalIp(), ipv6: null }
 }
 
 function normalizeStatus(connected: boolean): ConnectionStatus {
@@ -80,26 +77,28 @@ export async function getNetworkInfo(): Promise<NetworkInfo> {
   const platform = getPlatform()
 
   try {
-    const [networkStatus, localIp, ssid] = await Promise.all([
+    const [networkStatus, localAddresses] = await Promise.all([
       Network.getStatus(),
-      resolveLocalIp(platform),
-      resolveSsid(platform),
+      resolveLocalAddresses(platform),
     ])
 
     return {
       platform,
       status: normalizeStatus(networkStatus.connected),
       connectionType: networkStatus.connectionType,
-      localIp,
-      ssid,
+      localIp: localAddresses.ipv4,
+      localIpv6: localAddresses.ipv6,
+      ssid: null,
     }
   } catch {
+    const localAddresses = await resolveLocalAddresses(platform)
     return {
       platform,
       status: normalizeStatus(navigator.onLine),
       connectionType: 'unknown',
-      localIp: await resolveLocalIp(platform),
-      ssid: await resolveSsid(platform),
+      localIp: localAddresses.ipv4,
+      localIpv6: localAddresses.ipv6,
+      ssid: null,
     }
   }
 }

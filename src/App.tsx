@@ -1,44 +1,55 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { DeviceCard } from './components/DeviceCard'
-import { DiscoveredServiceCard } from './components/DiscoveredServiceCard'
-import { DiscoveredSSDPCard } from './components/DiscoveredSSDPCard'
+import { DiscoveryDiagnostics } from './components/DiscoveryDiagnostics'
 import { Header } from './components/Header'
 import { NetworkCard } from './components/NetworkCard'
 import { ScanButton } from './components/ScanButton'
 import { getNetworkInfo, openWifiSettings, watchNetworkInfo } from './services/networkInfoService'
 import { scanNetwork } from './services/networkService'
-import { discoverNetworkServices, isBonjourDiscoveryAvailable } from './services/networkDiscoveryService'
+import { discoverNetworkServices, isBonjourDiscoveryAvailable, type SsdpDiscoveryStatus } from './services/networkDiscoveryService'
+import { aggregateDiscoveredDevices, createServiceIdentityDiagnostics, type ServiceIdentityDiagnostic } from './services/deviceAggregationService'
 import type { NetworkInfo } from './types/network'
 import type { NetworkDevice } from './types/device'
-import type { DiscoveredService, DiscoveredSSDPService } from './types/discovery'
 import './App.css'
 
 function App() {
   const [devices, setDevices] = useState<NetworkDevice[]>([])
   const [isScanning, setIsScanning] = useState(false)
   const [hasScanned, setHasScanned] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
-  const [services, setServices] = useState<DiscoveredService[]>([])
-  const [ssdpServices, setSsdpServices] = useState<DiscoveredSSDPService[]>([])
+  const [ssdpStatus, setSsdpStatus] = useState<SsdpDiscoveryStatus>('unavailable')
+  const [identityDiagnostics, setIdentityDiagnostics] = useState<ServiceIdentityDiagnostic[]>([])
   const [pullDistance, setPullDistance] = useState(0)
   const touchStartY = useRef<number | null>(null)
   const networkKeyRef = useRef<string | null>(null)
 
   const scanCurrentNetwork = async () => {
+    if (isScanning) return
     setIsScanning(true)
+    setScanError(null)
+    setHasScanned(false)
 
     try {
       if (isBonjourDiscoveryAvailable()) {
         const discoveredServices = await discoverNetworkServices()
-        setServices(discoveredServices.bonjourServices)
-        setSsdpServices(discoveredServices.ssdpServices)
-        setDevices([])
+        setSsdpStatus(discoveredServices.ssdpStatus)
+        const aggregatedDevices = aggregateDiscoveredDevices(discoveredServices.bonjourServices, discoveredServices.ssdpServices)
+        const diagnostics = createServiceIdentityDiagnostics(discoveredServices.bonjourServices, aggregatedDevices, networkInfo?.localIp ?? null)
+        const currentCandidateIds = new Set(diagnostics.filter((diagnostic) => diagnostic.matchesCurrentDevice && diagnostic.candidateId).map((diagnostic) => diagnostic.candidateId))
+        setIdentityDiagnostics(diagnostics)
+        setDevices(aggregatedDevices.map((device) => ({ ...device, isCurrentDevice: currentCandidateIds.has(device.id) })))
       } else {
+        setSsdpStatus('unavailable')
+        setIdentityDiagnostics([])
         setDevices(await scanNetwork())
-        setServices([])
-        setSsdpServices([])
       }
+      setHasScanned(true)
+    } catch {
+      setDevices([])
+      setIdentityDiagnostics([])
+      setScanError('Scan failed. Check Local Network permission and try again.')
       setHasScanned(true)
     } finally {
       setIsScanning(false)
@@ -54,8 +65,7 @@ function App() {
 
     if (networkChanged && info.status === 'connected') {
       setDevices([])
-      setServices([])
-      setSsdpServices([])
+      setIdentityDiagnostics([])
       void scanCurrentNetwork()
     }
   }
@@ -111,23 +121,21 @@ function App() {
       <main className="app-main">
         <NetworkCard networkInfo={networkInfo} onChangeWifi={() => void openWifiSettings()} />
         <ScanButton isScanning={isScanning} onScan={() => void scanCurrentNetwork()} />
+        {isBonjourDiscoveryAvailable() && <p className="discovery-note" role="status">Bonjour enabled · {ssdpStatus === 'unavailable' ? 'SSDP unavailable: multicast entitlement not granted' : 'SSDP enabled'}</p>}
+        {!isScanning && scanError && <p className="scan-status scan-status-error" role="alert">{scanError}</p>}
+        {!isScanning && hasScanned && !scanError && <p className="scan-status" role="status">Scan complete · results depend on services advertised by devices on this network.</p>}
         <section className="devices-section" aria-labelledby="devices-heading">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Local network</p>
-              <h2 id="devices-heading">Devices Found</h2>
+              <h2 id="devices-heading">{isBonjourDiscoveryAvailable() ? 'Discovery Candidates' : 'Devices Found'}</h2>
             </div>
-            <span className="device-count" aria-label={`${isBonjourDiscoveryAvailable() ? services.length + ssdpServices.length : devices.length} results found`}>{isBonjourDiscoveryAvailable() ? services.length + ssdpServices.length : devices.length}</span>
+            <span className="device-count" aria-label={`${devices.length} ${isBonjourDiscoveryAvailable() ? 'candidates' : 'devices'} found`}>{devices.length}</span>
           </div>
           {hasScanned ? (
             <div className="device-list">
               {isBonjourDiscoveryAvailable() ? (
-                <>
-                  <h3 className="service-group-heading">Bonjour Services</h3>
-                  {services.length > 0 ? services.map((service) => <DiscoveredServiceCard key={service.id} service={service} />) : <p className="service-empty-state">No Bonjour services found.</p>}
-                  <h3 className="service-group-heading">SSDP / UPnP Services</h3>
-                  {ssdpServices.length > 0 ? ssdpServices.map((service) => <DiscoveredSSDPCard key={service.id} service={service} />) : <p className="service-empty-state">No SSDP services found.</p>}
-                </>
+                devices.length > 0 ? devices.map((device) => <DeviceCard key={device.id} device={device} />) : <p className="service-empty-state">No discovery candidates found.</p>
               ) : devices.map((device) => <DeviceCard key={device.id} device={device} />)}
             </div>
           ) : (
@@ -138,6 +146,7 @@ function App() {
             </div>
           )}
         </section>
+        <DiscoveryDiagnostics services={identityDiagnostics} devices={devices} ssdpStatus={ssdpStatus} />
       </main>
       <footer className="app-footer"><span className="footer-dot" aria-hidden="true" />Network info live · Bonjour on iOS · Mock fallback on web</footer>
     </div>

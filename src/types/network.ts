@@ -6,5 +6,6 @@ export interface NetworkInfo {
   status: ConnectionStatus
   connectionType: string
   localIp: string | null
+  localIpv6: string | null
   ssid: string | null
 }

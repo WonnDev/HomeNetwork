@@ -35,6 +35,10 @@
 		<string>_rtsp._tcp</string>
 		<string>_airplay._tcp</string>
 		<string>_googlecast._tcp</string>
+		<string>_companion-link._tcp</string>
+		<string>_raop._tcp</string>
+		<string>_remoted._tcp</string>
+		<string>_rdlink._tcp</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
