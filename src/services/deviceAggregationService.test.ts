@@ -95,6 +95,32 @@ describe('aggregateDiscoveredDevices', () => {
   it('T11 classifies weak metadata as unknown', () => {
     const [device] = aggregateDiscoveredDevices([bonjour({ name: 'Kitchen service', type: '_airplay._tcp' })], [])
     expect(device.type).toBe('unknown')
+    expect(device.confidence).toBe('unknown')
+  })
+
+  it('reports high confidence only when name and service evidence agree', () => {
+    const [device] = aggregateDiscoveredDevices([
+      bonjour({ name: 'Living Room Camera', type: '_rtsp._tcp' }),
+    ], [])
+    expect(device.type).toBe('camera')
+    expect(device.confidence).toBe('high')
+    expect(device.evidence).toHaveLength(2)
+  })
+
+  it('does not turn a generic service into a confident classification', () => {
+    const [device] = aggregateDiscoveredDevices([
+      bonjour({ name: 'Living Room Camera', type: '_http._tcp' }),
+    ], [])
+    expect(device.type).toBe('camera')
+    expect(device.confidence).toBe('medium')
+  })
+
+  it('recognizes RTSP as camera evidence without relying on the service name', () => {
+    const [device] = aggregateDiscoveredDevices([
+      bonjour({ name: 'ncm', type: '_rtsp._tcp' }),
+    ], [])
+    expect(device.type).toBe('camera')
+    expect(device.confidence).toBe('medium')
   })
 
   it('T12 keeps services from multiple protocols on one device', () => {

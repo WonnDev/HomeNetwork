@@ -7,6 +7,7 @@ export interface InventoryObservation {
   name: string
   ipAddress?: string
   hostname?: string
+  stableIdentity?: string
   bonjourServices: string[]
   responsivePorts: number[]
   evidence: string[]
@@ -21,6 +22,7 @@ export interface DeviceInventoryRecord {
   lastSeen: string
   lastObservedIp?: string
   hostname?: string
+  stableIdentity?: string
   bonjourServices: string[]
   responsivePorts: number[]
   evidence: string[]
@@ -78,6 +80,10 @@ export async function saveInventory(records: DeviceInventoryRecord[], storage: I
 }
 
 function findMatch(records: DeviceInventoryRecord[], observation: InventoryObservation): DeviceInventoryRecord | undefined {
+  if (observation.stableIdentity) {
+    const identityMatch = records.find((record) => record.stableIdentity === observation.stableIdentity)
+    if (identityMatch) return identityMatch
+  }
   const hostname = observation.hostname && normalize(observation.hostname)
   if (!hostname) return undefined
   return records.find((record) => record.hostname && normalize(record.hostname) === hostname)
@@ -106,6 +112,7 @@ export function applyScanObservations(
       match.observedInLatestCompletedScan = scanCompleted
       if (observation.ipAddress) match.lastObservedIp = observation.ipAddress
       if (observation.hostname) match.hostname = observation.hostname
+      if (observation.stableIdentity) match.stableIdentity = observation.stableIdentity
       match.bonjourServices = unique([...match.bonjourServices, ...observation.bonjourServices])
       match.responsivePorts = [...new Set([...match.responsivePorts, ...observation.responsivePorts])].sort((left, right) => left - right)
       match.evidence = unique([...match.evidence, ...observation.evidence])
@@ -121,6 +128,7 @@ export function applyScanObservations(
       lastSeen: timestamp,
       lastObservedIp: observation.ipAddress,
       hostname: observation.hostname,
+      stableIdentity: observation.stableIdentity,
       bonjourServices: unique(observation.bonjourServices),
       responsivePorts: [...new Set(observation.responsivePorts)].sort((left, right) => left - right),
       evidence: unique(observation.evidence),

@@ -8,6 +8,7 @@ export type DeviceType =
   | 'unknown'
 
 export type DeviceStatus = 'online' | 'offline'
+export type DeviceConfidence = 'high' | 'medium' | 'low' | 'unknown'
 
 export interface NetworkDevice {
   id: string
@@ -16,5 +17,7 @@ export interface NetworkDevice {
   type: DeviceType
   status: DeviceStatus
   services: string[]
+  confidence: DeviceConfidence
+  evidence: string[]
   isCurrentDevice?: boolean
 }

@@ -421,6 +421,7 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
             if discoveredServices[service.id] == nil {
                 discoveredServices[service.id] = service
                 notifyListeners("bonjourServiceFound", data: service.dictionary)
+                resolveBonjourService(service, endpoint: result.endpoint)
             }
         }
 
@@ -434,6 +435,46 @@ public class LocalNetworkPlugin: CAPPlugin, CAPBridgedPlugin {
         for id in removedIds {
             guard let service = discoveredServices.removeValue(forKey: id) else { continue }
             notifyListeners("bonjourServiceLost", data: service.dictionary)
+        }
+    }
+
+    private func resolveBonjourService(_ service: DiscoveredService, endpoint: NWEndpoint) {
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        var finished = false
+        let finish: (NWEndpoint?) -> Void = { [weak self, weak connection] remoteEndpoint in
+            guard !finished else { return }
+            finished = true
+            connection?.cancel()
+            guard let self, var resolvedService = self.discoveredServices[service.id] else { return }
+            if case let .hostPort(host, _) = remoteEndpoint {
+                let hostValue = String(describing: host)
+                if hostValue.contains(":") {
+                    if !hostValue.lowercased().hasPrefix("fe80:") { resolvedService.ipAddress = hostValue }
+                } else if hostValue.split(separator: ".").count == 4 {
+                    resolvedService.ipAddress = hostValue
+                } else {
+                    resolvedService.hostname = hostValue
+                }
+            }
+            self.discoveredServices[service.id] = resolvedService
+            self.notifyListeners("bonjourServiceFound", data: resolvedService.dictionary)
+        }
+
+        connection.stateUpdateHandler = { [weak connection] state in
+            switch state {
+            case .ready:
+                finish(connection?.currentPath?.remoteEndpoint)
+            case .failed:
+                finish(connection?.currentPath?.remoteEndpoint)
+            case .cancelled:
+                finish(nil)
+            default:
+                break
+            }
+        }
+        connection.start(queue: browserQueue)
+        browserQueue.asyncAfter(deadline: .now() + 2) {
+            finish(nil)
         }
     }
 
@@ -491,9 +532,14 @@ private struct DiscoveredService {
     let name: String
     let type: String
     let domain: String
+    var hostname: String?
+    var ipAddress: String?
 
     var dictionary: [String: String] {
-        ["id": id, "name": name, "type": type, "domain": domain]
+        var result = ["id": id, "name": name, "type": type, "domain": domain]
+        if let hostname { result["hostname"] = hostname }
+        if let ipAddress { result["ipAddress"] = ipAddress }
+        return result
     }
 }
 

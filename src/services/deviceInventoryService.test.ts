@@ -42,6 +42,14 @@ describe('device inventory', () => {
     expect(second[0].lastObservedIp).toBe('192.168.2.253')
   })
 
+  it('matches the same Bonjour service across scans without a hostname', () => {
+    const first = applyScanObservations([], [observation({ stableIdentity: 'bonjour:ncm|_rtsp._tcp|local.' })], fixedDate)
+    const second = applyScanObservations(first, [observation({ stableIdentity: 'bonjour:ncm|_rtsp._tcp|local.', ipAddress: '192.168.2.40' })], new Date('2026-10-25T12:00:00.000Z'))
+    expect(second).toHaveLength(1)
+    expect(second[0].firstSeen).toBe(fixedDate.toISOString())
+    expect(second[0].lastObservedIp).toBe('192.168.2.40')
+  })
+
   it('keeps IP-only observations separate because IP is not definitive identity', () => {
     const first = applyScanObservations([], [observation()], fixedDate)
     const second = applyScanObservations(first, [observation()], new Date('2026-10-25T12:00:00.000Z'))

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { NetworkDevice } from '../types/device'
 import type { ServiceIdentityDiagnostic } from '../services/deviceAggregationService'
 import type { HostDiscoveryProgress, HostDiscoveryResult } from '../services/hostDiscoveryService'
@@ -14,6 +15,8 @@ interface DiscoveryDiagnosticsProps {
 
 export function DiscoveryDiagnostics({ services, devices, ssdpStatus, hostDiscovery, progress, bonjourDurationMs, tcpDurationMs }: DiscoveryDiagnosticsProps) {
   const currentDevice = devices.find((device) => device.isCurrentDevice)
+  const [showAll, setShowAll] = useState(false)
+  const visibleServices = showAll ? services : services.slice(0, 5)
 
   return (
     <details className="discovery-diagnostics">
@@ -33,13 +36,14 @@ export function DiscoveryDiagnostics({ services, devices, ssdpStatus, hostDiscov
       {hostDiscovery.statsByPort && <ul className="diagnostics-list"><li><strong>TCP outcomes by port</strong><span>{Object.entries(hostDiscovery.statsByPort).map(([port, stats]) => `${port}: success ${stats.success ?? 0}, refused ${stats.refused ?? 0}, timeout ${stats.timeout ?? 0}, other ${stats.other ?? 0}, cancelled ${stats.cancelled ?? 0}`).join(' · ')}</span></li></ul>}
       {services.length > 0 && (
         <ul className="diagnostics-list">
-          {services.map((service) => (
+          {visibleServices.map((service) => (
             <li key={service.serviceId}>
               <strong>{service.instanceName}</strong>
               <span>{service.serviceType} · {service.mergeReason}</span>
               <small>{service.candidateId ?? 'No candidate'}{service.matchesCurrentDevice ? ' · This iPhone' : ''}</small>
             </li>
           ))}
+          {services.length > 5 && <li><button className="list-expand-button" type="button" onClick={() => setShowAll((expanded) => !expanded)} aria-label={showAll ? 'Show fewer diagnostics' : `Show all ${services.length} diagnostics`} title={showAll ? 'Show fewer' : 'Show more'}>{showAll ? '⌃' : '⌄'}</button></li>}
         </ul>
       )}
     </details>

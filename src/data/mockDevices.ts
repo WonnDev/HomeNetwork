@@ -8,6 +8,8 @@ export const mockDevices: NetworkDevice[] = [
     type: 'router',
     status: 'online',
     services: ['HTTP', 'HTTPS'],
+    confidence: 'medium',
+    evidence: ['Name suggests router'],
   },
   {
     id: 'camera-1',
@@ -16,6 +18,8 @@ export const mockDevices: NetworkDevice[] = [
     type: 'camera',
     status: 'online',
     services: ['RTSP', 'ONVIF'],
+    confidence: 'high',
+    evidence: ['Name or metadata suggests camera', 'Service evidence: RTSP, ONVIF'],
   },
   {
     id: 'tv-1',
@@ -24,6 +28,8 @@ export const mockDevices: NetworkDevice[] = [
     type: 'tv',
     status: 'online',
     services: ['HTTP', 'SSDP'],
+    confidence: 'medium',
+    evidence: ['Name suggests tv'],
   },
   {
     id: 'unknown-1',
@@ -32,5 +38,7 @@ export const mockDevices: NetworkDevice[] = [
     type: 'unknown',
     status: 'offline',
     services: [],
+    confidence: 'unknown',
+    evidence: ['Insufficient evidence for a device category'],
   },
 ]

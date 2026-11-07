@@ -1,5 +1,6 @@
 import type { NetworkDevice, DeviceType } from '../types/device'
 import type { DiscoveredService, DiscoveredSSDPService } from '../types/discovery'
+import type { ResponsiveIpHost } from './hostDiscoveryService'
 
 export interface ServiceIdentityDiagnostic {
   serviceId: string
@@ -13,7 +14,7 @@ export interface ServiceIdentityDiagnostic {
   matchesCurrentDevice: boolean
 }
 
-interface AggregatedDevice extends NetworkDevice {
+type AggregatedDevice = Omit<NetworkDevice, 'confidence' | 'evidence'> & {
   identityKeys: Set<string>
 }
 
@@ -38,12 +39,37 @@ function getUuid(usn?: string): string | undefined {
 
 function inferDeviceType(name: string, services: string[]): DeviceType {
   const searchableText = normalize(`${name} ${services.join(' ')}`)
-  if (/(camera|onvif)/.test(searchableText)) return 'camera'
+  if (/(camera|onvif|rtsp)/.test(searchableText)) return 'camera'
   if (/(tv|roku|samsung)/.test(searchableText)) return 'tv'
   if (/(router|gateway|upnp igd)/.test(searchableText)) return 'router'
   if (/(nas|storage|synology|qnap)/.test(searchableText)) return 'nas'
   if (/(air conditioner|thermostat)/.test(searchableText)) return 'air-conditioner'
   return 'unknown'
+}
+
+function classifyConfidence(name: string, services: string[], type: DeviceType): { confidence: NetworkDevice['confidence']; evidence: string[] } {
+  if (type === 'unknown') return { confidence: 'unknown', evidence: ['Insufficient evidence for a device category'] }
+
+  const searchableText = normalize(`${name} ${services.join(' ')}`)
+  const strongServicePatterns: Partial<Record<DeviceType, RegExp>> = {
+    camera: /rtsp|onvif/,
+    tv: /airplay|googlecast|roku/,
+    router: /upnp|igd|gateway/,
+    nas: /smb|nfs|synology|qnap/,
+    'air-conditioner': /air conditioner|thermostat/,
+    iot: /matter|homekit/,
+  }
+  const servicePattern = strongServicePatterns[type]
+  const categoryEvidence = servicePattern ? services.filter((service) => servicePattern.test(normalize(service))) : []
+  const nameEvidence = new RegExp(type === 'air-conditioner' ? 'air conditioner|thermostat' : type, 'i').test(searchableText)
+
+  if (nameEvidence && categoryEvidence.length > 0) {
+    return { confidence: 'high', evidence: [`Name or metadata suggests ${type}`, `Service evidence: ${categoryEvidence.join(', ')}`] }
+  }
+  if (categoryEvidence.length > 0 || nameEvidence) {
+    return { confidence: 'medium', evidence: [nameEvidence ? `Name suggests ${type}` : `Service evidence: ${categoryEvidence.join(', ')}`] }
+  }
+  return { confidence: 'low', evidence: [`Weak metadata suggests ${type}`] }
 }
 
 function findMatchingDevice(devices: AggregatedDevice[], identityKeys: string[]): AggregatedDevice | undefined {
@@ -70,7 +96,7 @@ function addDevice(
   const existing = findMatchingDevice(devices, input.identityKeys)
   if (existing) {
     input.services.forEach((service) => addService(existing, service))
-    if (existing.ip === 'Unknown address' && input.ip !== 'Unknown address') existing.ip = input.ip
+    if (existing.ip === 'Address unavailable' && input.ip !== 'Address unavailable') existing.ip = input.ip
     if (existing.name === 'Unknown device' && input.name !== 'Unknown device') existing.name = input.name
     existing.identityKeys = new Set([...existing.identityKeys, ...input.identityKeys])
     return
@@ -108,7 +134,7 @@ export function aggregateDiscoveredDevices(
   const devices: AggregatedDevice[] = []
 
   bonjourServices.forEach((service) => {
-    const ip = service.ipAddress ?? service.hostname ?? 'Unknown address'
+    const ip = service.ipAddress ?? service.hostname ?? 'Address unavailable'
     addDevice(devices, {
       id: `bonjour-${service.name}`,
       name: service.name || 'Unknown device',
@@ -126,7 +152,7 @@ export function aggregateDiscoveredDevices(
     addDevice(devices, {
       id: `ssdp-${service.id}`,
       name,
-      ip: host ?? 'Unknown address',
+      ip: host ?? 'Address unavailable',
       status: 'online',
       identityKeys: ssdpIdentity(service),
       services: [serviceName],
@@ -134,6 +160,7 @@ export function aggregateDiscoveredDevices(
   })
 
   return devices.sort((left, right) => left.id.localeCompare(right.id)).map((device) => ({
+    ...classifyConfidence(device.name, device.services, device.type),
     id: device.id,
     name: device.name,
     ip: device.ip,
@@ -141,6 +168,24 @@ export function aggregateDiscoveredDevices(
     status: device.status,
     services: [...device.services].sort(),
   }))
+}
+
+export function createCameraCandidatesFromHosts(hosts: ResponsiveIpHost[]): NetworkDevice[] {
+  return hosts
+    .filter((host) => host.ports.includes(554) || host.ports.includes(8554))
+    .map((host) => {
+      const rtspPorts = host.ports.filter((port) => port === 554 || port === 8554)
+      return {
+        id: `tcp-camera-${host.ipAddress}`,
+        name: 'Camera candidate',
+        ip: host.ipAddress,
+        type: 'camera' as const,
+        status: 'online' as const,
+        services: rtspPorts.map((port) => `RTSP port ${port}`),
+        confidence: 'low' as const,
+        evidence: rtspPorts.map((port) => `TCP port ${port} may provide RTSP`),
+      }
+    })
 }
 
 export function createServiceIdentityDiagnostics(

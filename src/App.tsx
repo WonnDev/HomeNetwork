@@ -7,19 +7,21 @@ import { DeviceInventorySection } from './components/DeviceInventorySection'
 import { Header } from './components/Header'
 import { NetworkCard } from './components/NetworkCard'
 import { ScanButton } from './components/ScanButton'
+import { AirConditionerRemote } from './components/AirConditionerRemote'
 import { getNetworkInfo, openWifiSettings, watchNetworkInfo } from './services/networkInfoService'
 import { scanNetwork } from './services/networkService'
 import { cancelNetworkDiscovery, discoverNetworkServices, isBonjourDiscoveryAvailable, type SsdpDiscoveryStatus } from './services/networkDiscoveryService'
-import { aggregateDiscoveredDevices, createServiceIdentityDiagnostics, type ServiceIdentityDiagnostic } from './services/deviceAggregationService'
+import { aggregateDiscoveredDevices, createCameraCandidatesFromHosts, createServiceIdentityDiagnostics, type ServiceIdentityDiagnostic } from './services/deviceAggregationService'
 import { cancelHostDiscovery, discoverResponsiveHosts, type HostDiscoveryProgress, type HostDiscoveryResult, type ResponsiveIpHost } from './services/hostDiscoveryService'
 import { createScanToken } from './services/scanLifecycleService'
-import { applyScanObservations, createManualInventoryRecord, loadInventory, saveInventory, updateInventoryRecord, type DeviceInventoryRecord, type InventoryObservation, type InventoryRecognition } from './services/deviceInventoryService'
+import { applyScanObservations, loadInventory, saveInventory, updateInventoryRecord, type DeviceInventoryRecord, type InventoryObservation, type InventoryRecognition } from './services/deviceInventoryService'
 import type { NetworkInfo } from './types/network'
 import type { NetworkDevice } from './types/device'
 import './App.css'
 
 type ScanPhase = 'idle' | 'bonjour' | 'tcp'
 type ScanTerminalStatus = 'idle' | 'scanning' | 'completed' | 'partial-timeout' | 'cancelled' | 'failed'
+type AppSection = 'scanner' | 'air-conditioner'
 
 function App() {
   const [devices, setDevices] = useState<NetworkDevice[]>([])
@@ -39,12 +41,17 @@ function App() {
   const [tcpDurationMs, setTcpDurationMs] = useState<number | null>(null)
   const [inventoryRecords, setInventoryRecords] = useState<DeviceInventoryRecord[]>([])
   const [inventoryError, setInventoryError] = useState<string | null>(null)
+  const [showAllDevices, setShowAllDevices] = useState(false)
+  const [showAllHosts, setShowAllHosts] = useState(false)
+  const [activeSection, setActiveSection] = useState<AppSection>('air-conditioner')
   const [pullDistance, setPullDistance] = useState(0)
   const touchStartY = useRef<number | null>(null)
   const networkKeyRef = useRef<string | null>(null)
   const scanTokenRef = useRef(createScanToken())
   const scanStartedAtRef = useRef<number | null>(null)
   const inventoryRef = useRef<DeviceInventoryRecord[]>([])
+  const visibleDevices = showAllDevices ? devices : devices.slice(0, 5)
+  const visibleHosts = showAllHosts ? responsiveHosts : responsiveHosts.slice(0, 5)
 
   useEffect(() => {
     void loadInventory().then((records) => {
@@ -56,7 +63,6 @@ function App() {
   const persistScanInventory = async (
     diagnostics: ServiceIdentityDiagnostic[],
     aggregatedDevices: NetworkDevice[],
-    hosts: ResponsiveIpHost[],
     scanCompleted: boolean,
   ) => {
     const candidateObservations = new Map<string, InventoryObservation>()
@@ -66,8 +72,9 @@ function App() {
       const existing = candidateObservations.get(key)
       const observation: InventoryObservation = existing ?? {
         name: candidate?.name ?? diagnostic.instanceName,
-        ipAddress: candidate?.ip !== 'Unknown address' ? candidate?.ip : diagnostic.ipAddress,
+        ipAddress: candidate?.ip !== 'Address unavailable' ? candidate?.ip : diagnostic.ipAddress,
         hostname: diagnostic.hostname,
+        stableIdentity: `bonjour:${diagnostic.serviceId}`,
         bonjourServices: [],
         responsivePorts: [],
         evidence: [],
@@ -77,13 +84,6 @@ function App() {
       candidateObservations.set(key, observation)
     })
     const observations = [...candidateObservations.values()]
-    hosts.forEach((host) => observations.push({
-      name: host.ipAddress,
-      ipAddress: host.ipAddress,
-      bonjourServices: [],
-      responsivePorts: host.ports,
-      evidence: host.ports.map((port) => `TCP port ${port}`),
-    }))
     const updated = applyScanObservations(inventoryRef.current, observations, new Date(), scanCompleted)
     try {
       await saveInventory(updated)
@@ -95,17 +95,16 @@ function App() {
     }
   }
 
-  const addManualInventoryRecord = async (name: string, ipAddress: string) => {
-    const updated = [...inventoryRef.current, createManualInventoryRecord(name, ipAddress)]
-    await saveInventory(updated)
-    inventoryRef.current = updated
-    setInventoryRecords(updated)
-  }
-
   const updateInventory = async (id: string, changes: { name?: string; recognition?: InventoryRecognition }) => {
     const updated = await updateInventoryRecord(inventoryRef.current, id, changes)
     inventoryRef.current = updated
     setInventoryRecords(updated)
+  }
+
+  const clearInventory = async () => {
+    await saveInventory([])
+    inventoryRef.current = []
+    setInventoryRecords([])
   }
 
   const scanCurrentNetwork = async () => {
@@ -146,14 +145,17 @@ function App() {
         setSsdpStatus(discoveredServices.ssdpStatus)
         setResponsiveHosts(hostResult.hosts)
         setHostDiscovery(hostResult)
-        const aggregatedDevices = aggregateDiscoveredDevices(discoveredServices.bonjourServices, discoveredServices.ssdpServices)
+        const aggregatedDevices = [
+          ...aggregateDiscoveredDevices(discoveredServices.bonjourServices, discoveredServices.ssdpServices),
+          ...createCameraCandidatesFromHosts(hostResult.hosts),
+        ]
         const diagnostics = createServiceIdentityDiagnostics(discoveredServices.bonjourServices, aggregatedDevices, networkInfo?.localIp ?? null)
         const currentCandidateIds = new Set(diagnostics.filter((diagnostic) => diagnostic.matchesCurrentDevice && diagnostic.candidateId).map((diagnostic) => diagnostic.candidateId))
         setIdentityDiagnostics(diagnostics)
         setDevices(aggregatedDevices.map((device) => ({ ...device, isCurrentDevice: currentCandidateIds.has(device.id) })))
         if (bonjourOutcome.status === 'rejected') setScanError('Bonjour discovery failed; TCP results may be partial.')
         setScanStatus(hostResult.status === 'partial-timeout' ? 'partial-timeout' : hostResult.status === 'cancelled' ? 'cancelled' : hostResult.status === 'failed' ? 'failed' : 'completed')
-        void persistScanInventory(diagnostics, aggregatedDevices, hostResult.hosts, bonjourOutcome.status === 'fulfilled' && hostResult.status === 'complete')
+        void persistScanInventory(diagnostics, aggregatedDevices, bonjourOutcome.status === 'fulfilled' && hostResult.status === 'complete')
       } else {
         setSsdpStatus('unavailable')
         setIdentityDiagnostics([])
@@ -256,7 +258,15 @@ function App() {
         {pullDistance >= 52 ? 'Release to scan' : 'Pull to scan'}
       </div>
       <Header />
-      <main className="app-main">
+      <nav className="main-menu" aria-label="Main menu">
+        <button className={activeSection === 'air-conditioner' ? 'is-active' : ''} type="button" onClick={() => setActiveSection('air-conditioner')}>
+          <span className="main-menu-icon" aria-hidden="true">≋</span><span><small>01</small>Air conditioner</span>
+        </button>
+        <button className={activeSection === 'scanner' ? 'is-active' : ''} type="button" onClick={() => setActiveSection('scanner')}>
+          <span className="main-menu-icon" aria-hidden="true">⌁</span><span><small>02</small>Network scanner</span>
+        </button>
+      </nav>
+      {activeSection === 'scanner' ? <main className="app-main">
         <NetworkCard networkInfo={networkInfo} onChangeWifi={() => void openWifiSettings()} />
         <ScanButton isScanning={isScanning} onScan={() => void scanCurrentNetwork()} onCancel={cancelScan} />
         {isBonjourDiscoveryAvailable() && <p className="discovery-note" role="status">Bonjour enabled · {ssdpStatus === 'unavailable' ? 'SSDP unavailable: multicast entitlement not granted' : 'SSDP enabled'}</p>}
@@ -276,8 +286,8 @@ function App() {
           {hasScanned ? (
             <div className="device-list">
               {isBonjourDiscoveryAvailable() ? (
-                devices.length > 0 ? devices.map((device) => <DeviceCard key={device.id} device={device} />) : <p className="service-empty-state">No discovery candidates found.</p>
-              ) : devices.map((device) => <DeviceCard key={device.id} device={device} />)}
+                devices.length > 0 ? visibleDevices.map((device) => <DeviceCard key={device.id} device={device} />) : <p className="service-empty-state">No discovery candidates found.</p>
+              ) : visibleDevices.map((device) => <DeviceCard key={device.id} device={device} />)}
             </div>
           ) : (
             <div className="empty-state">
@@ -286,6 +296,7 @@ function App() {
               <span>Discovered devices will appear here.</span>
             </div>
           )}
+          {devices.length > 5 && <button className="list-expand-button" type="button" onClick={() => setShowAllDevices((expanded) => !expanded)} aria-label={showAllDevices ? 'Show fewer discovery candidates' : `Show all ${devices.length} discovery candidates`} title={showAllDevices ? 'Show fewer' : 'Show more'}>{showAllDevices ? '⌃' : '⌄'}</button>}
         </section>
         {isBonjourDiscoveryAvailable() && <section className="devices-section" aria-labelledby="hosts-heading">
           <div className="section-heading">
@@ -294,11 +305,12 @@ function App() {
           </div>
           {hostDiscovery.status === 'failed' && <p className="service-empty-state">{hostDiscovery.error}</p>}
           {hostDiscovery.status === 'complete' && responsiveHosts.length === 0 && <p className="service-empty-state">No supported TCP ports responded. This does not prove hosts are absent.</p>}
-          {responsiveHosts.length > 0 && <div className="device-list">{responsiveHosts.map((host) => <ResponsiveHostCard key={host.ipAddress} host={host} />)}</div>}
+          {responsiveHosts.length > 0 && <div className="device-list">{visibleHosts.map((host) => <ResponsiveHostCard key={host.ipAddress} host={host} />)}</div>}
+          {responsiveHosts.length > 5 && <button className="list-expand-button" type="button" onClick={() => setShowAllHosts((expanded) => !expanded)} aria-label={showAllHosts ? 'Show fewer responsive hosts' : `Show all ${responsiveHosts.length} responsive hosts`} title={showAllHosts ? 'Show fewer' : 'Show more'}>{showAllHosts ? '⌃' : '⌄'}</button>}
         </section>}
         <DiscoveryDiagnostics services={identityDiagnostics} devices={devices} ssdpStatus={ssdpStatus} hostDiscovery={hostDiscovery} progress={scanProgress} bonjourDurationMs={bonjourDurationMs} tcpDurationMs={tcpDurationMs} />
-        <DeviceInventorySection records={inventoryRecords} storageError={inventoryError} onAddManual={addManualInventoryRecord} onUpdate={updateInventory} />
-      </main>
+        <DeviceInventorySection records={inventoryRecords} storageError={inventoryError} onUpdate={updateInventory} onClear={clearInventory} />
+      </main> : <AirConditionerRemote />}
       <footer className="app-footer"><span className="footer-dot" aria-hidden="true" />Network info live · Bonjour on iOS · Mock fallback on web</footer>
     </div>
   )
